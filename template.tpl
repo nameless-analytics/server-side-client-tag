@@ -3089,7 +3089,6 @@ function send_to_firestore(event_data) {
   var request_validated = false;
 
   return Firestore.runTransaction((transaction) => {
-    // The callback can be retried. Reset attempt state and avoid external side effects here.
     transaction_result = null;
     request_validated = false;
 
@@ -3291,6 +3290,7 @@ function send_to_firestore(event_data) {
         }
 
         // If session exists in Firestore
+        // Update session values in Firestore from current session data if not already exists or has a not null value
         const protected_session_keys = [
           "session_date",
           "session_id",
@@ -3334,19 +3334,69 @@ function send_to_firestore(event_data) {
           }
         });
 
-        // Update session values in Firestore from current event data
-        last_session.session_exit_page_category = (event_data.page_data.page_category) ? event_data.page_data.page_category : null;
-        last_session.session_exit_page_url = event_data.page_data.page_url;
-        last_session.session_exit_page_path = event_data.page_data.page_path;
-        last_session.session_exit_page_title = event_data.page_data.page_title;
-        last_session.session_end_timestamp = event_data.event_timestamp;
+        // Update session data from current event data if not already exists or has a not null value
+        if (event_data.event_name === 'page_view' && event_data.event_timestamp < last_session.session_start_timestamp) {
+          last_session.session_date = event_data.event_date;
+          last_session.session_channel_grouping = event_data.event_data.channel_grouping;
+          last_session.session_source = event_data.event_data.source;
+          last_session.session_tld_source = event_data.event_data.tld_source;
+          last_session.session_campaign = event_data.event_data.campaign;
+          last_session.session_campaign_id = event_data.event_data.campaign_id;
+          last_session.session_campaign_click_id = event_data.event_data.campaign_click_id;
+          last_session.session_campaign_term = event_data.event_data.campaign_term;
+          last_session.session_campaign_content = event_data.event_data.campaign_content;
+          last_session.session_device_type = event_data.event_data.device_type;
+          last_session.session_country = event_data.event_data.country;
+          last_session.session_city = event_data.event_data.city;
+          last_session.session_language = event_data.event_data.browser_language;
+          last_session.session_hostname = event_data.page_data.page_hostname;
+          last_session.session_browser_name = event_data.event_data.browser_name;
+          last_session.session_landing_page_category = (event_data.page_data.page_category) ? event_data.page_data.page_category : null;
+          last_session.session_landing_page_url = event_data.page_data.page_url;
+          last_session.session_landing_page_path = event_data.page_data.page_path;
+          last_session.session_landing_page_title = event_data.page_data.page_title;
+          last_session.session_start_timestamp = event_data.event_timestamp;
+
+          if (last_session === actual_last_session) { firestore_data.user_last_session_timestamp = event_data.event_timestamp; }
+
+          // Update user data if the current event is the first session of the user
+          if (event_data.event_timestamp < firestore_data.user_first_session_timestamp) {
+            firestore_data.user_date = event_data.event_date;
+            firestore_data.user_channel_grouping = event_data.event_data.channel_grouping;
+            firestore_data.user_source = event_data.event_data.source;
+            firestore_data.user_tld_source = event_data.event_data.tld_source;
+            firestore_data.user_campaign = event_data.event_data.campaign;
+            firestore_data.user_campaign_id = event_data.event_data.campaign_id;
+            firestore_data.user_campaign_click_id = event_data.event_data.campaign_click_id;
+            firestore_data.user_campaign_term = event_data.event_data.campaign_term;
+            firestore_data.user_campaign_content = event_data.event_data.campaign_content;
+            firestore_data.user_device_type = event_data.event_data.device_type;
+            firestore_data.user_country = event_data.event_data.country;
+            firestore_data.user_city = event_data.event_data.city;
+            firestore_data.user_language = event_data.event_data.browser_language;
+            firestore_data.user_first_session_timestamp = event_data.event_timestamp;
+          }
+        }
+
+        // Set exit page data
+        if (event_origin === 'Website' && event_data.event_timestamp >= last_session.session_end_timestamp) {
+          last_session.session_exit_page_category = (event_data.page_data.page_category) ? event_data.page_data.page_category : null;
+          last_session.session_exit_page_url = event_data.page_data.page_url;
+          last_session.session_exit_page_path = event_data.page_data.page_path;
+          last_session.session_exit_page_title = event_data.page_data.page_title;
+          last_session.session_end_timestamp = event_data.event_timestamp;
+        }
+
+        // Set cross-domain session flag
         if (last_session.cross_domain_session === 'No') {
           last_session.cross_domain_session = (event_data.event_data.cross_domain_id) ? 'Yes' : 'No';
         }
 
+        // Set user ID on login, clear it on logout
         if (event_data.event_name === 'login') { last_session.user_id = event_data.session_data.user_id || null; }
         if (event_data.event_name === 'logout') { last_session.user_id = null; }
 
+        // Return result
         transaction_result = {
           status: true,
           action: 'update_session',
@@ -3393,7 +3443,7 @@ function send_to_firestore(event_data) {
 }
 
 
-// Set website cookies once, outside the retryable transaction callback
+// Set cookies
 function set_request_cookies(event_data) {
   if (event_origin !== 'Website') { return; }
 
@@ -3405,7 +3455,7 @@ function set_request_cookies(event_data) {
 }
 
 
-// Add the committed Firestore state to the payload before BigQuery processing
+// Add user and session data to Google BigQuery
 function enrich_event_data_from_firestore(event_data, firestore_data) {
   for (var key in firestore_data) {
     if (firestore_data.hasOwnProperty(key) && key !== 'sessions') {
@@ -3429,7 +3479,6 @@ function enrich_event_data_from_firestore(event_data, firestore_data) {
 }
 
 
-// Log only the final transaction attempt so retries do not duplicate messages
 function log_firestore_transaction_result(transaction_result, success) {
   if (!data.enable_logs || !transaction_result || transaction_result.status !== true) { return; }
 
