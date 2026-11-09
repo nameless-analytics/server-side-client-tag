@@ -2,5 +2,5 @@ homepage: 'https://namelessanalytics.com/'
 documentation: 'https://github.com/nameless-analytics/server-side-client-tag/'
 versions:
 # Latest version
-  - sha: 'b948cd2cffb04c537304f208262f8338de6aac29'
+  - sha: 'ba1790f90b10c181810e097edf7417dd8a824d7e'
     changeNotes: 'Initial release.'
