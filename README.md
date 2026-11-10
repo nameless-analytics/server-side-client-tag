@@ -75,6 +75,7 @@ These user parameters are reserved and can't be modified:
 - user_campaign_id
 - user_campaign_click_id
 - user_campaign_content
+- user_medium
 - user_campaign_term
 - user_device_type
 - user_country
@@ -120,6 +121,7 @@ These session parameters are reserved and can't be modified:
 - session_campaign_click_id
 - session_campaign_term
 - session_campaign_content
+- session_medium
 - session_device_type
 - session_country
 - session_city
@@ -169,6 +171,7 @@ These event parameters are reserved and can't be modified:
 - campaign_click_id
 - campaign_term
 - campaign_content
+- medium
 - user_agent
 - browser_name
 - browser_language
