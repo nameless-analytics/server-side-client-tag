@@ -97,7 +97,9 @@ event_data.gtm_data = event_data.gtm_data || {};
 if (event_data.event_data) {
   // Optional in the payload: sources that do not send it, such as the Streaming Protocol, have none
   if (event_data.event_data.medium === undefined) { event_data.event_data.medium = null; }
-  event_data.event_data.channel_grouping = get_channel_grouping(event_data_obj.source, event_data_obj.medium, event_data_obj.campaign, event_data_obj.campaign_click_id);
+  if (event_data.event_data.campaign_click_id_type === undefined) { event_data.event_data.campaign_click_id_type = null; }
+  event_data.event_data.channel_grouping = get_channel_grouping(event_data_obj.source, event_data_obj.medium, event_data_obj.campaign_click_id_type);
+  event_data.event_data.channel_paid = get_channel_paid(event_data_obj.medium, event_data_obj.campaign_click_id_type);
 }
 
 
@@ -237,6 +239,7 @@ function validate_payload_schema(payload) {
     validate_required_nullable_string(payload.event_data, 'campaign_term', errors);
     validate_required_nullable_string(payload.event_data, 'campaign_content', errors);
     validate_optional_nullable_string(payload.event_data, 'medium', errors);
+    validate_optional_nullable_string(payload.event_data, 'campaign_click_id_type', errors);
   }
 
   validate_optional_object(payload, 'user_data', errors);
@@ -306,11 +309,13 @@ function validate_reserved_parameters(payload) {
     'client_id',
     'sessions',
     'user_channel_grouping',
+    'user_channel_paid',
     'user_source',
     'user_tld_source',
     'user_campaign',
     'user_campaign_id',
     'user_campaign_click_id',
+    'user_campaign_click_id_type',
     'user_campaign_term',
     'user_campaign_content',
     'user_medium',
@@ -327,11 +332,13 @@ function validate_reserved_parameters(payload) {
     'session_number',
     'cross_domain_session',
     'session_channel_grouping',
+    'session_channel_paid',
     'session_source',
     'session_tld_source',
     'session_campaign',
     'session_campaign_id',
     'session_campaign_click_id',
+    'session_campaign_click_id_type',
     'session_campaign_term',
     'session_campaign_content',
     'session_medium',
@@ -956,7 +963,7 @@ function build_payload(event_data) {
 // CHANNEL GROUPING
 // --------------------------------------------------------------------------------------------------------------
 
-// Source categories of the GA4 default channel group (support.google.com/analytics/answer/9756891), as Google lists them
+// Sources and their category: GA4's published list (support.google.com/analytics/answer/9756891) as the base
 const source_categories = {
   '360.cn': 'search',
   '43things': 'social',
@@ -1780,32 +1787,31 @@ const source_categories = {
 };
 
 const channel_patterns = {
-  cross_network: createRegex('cross-network', 'i'),
   ai: createRegex('(^|[^a-z0-9])(chatgpt|openai|gemini|bard|claude|copilot|perplexity|deepseek|grok)|\\.ai$', 'i'),
   webmail: createRegex('^(mail|webmail)\\.', 'i'),
-  google_non_search: createRegex('^(mail|docs|drive|sites|calendar|meet|classroom|groups|accounts|play)\\.google\\.', 'i'),
+  google_non_search: createRegex('^(mail|docs|drive|sites|calendar|meet|classroom|groups|accounts|play|tagassistant)\\.google\\.', 'i'),
   search: createRegex('(^|[^a-z0-9])(360\\.cn|baidu|duckduckgo|ecosia|google|naver|qwant|seznam|sogou|startpage|yahoo|yandex)|(^|[^a-z0-9])(alice|aol|ask|bing|brave)([^a-z0-9]|$)', 'i'),
   social: createRegex('(^|[^a-z0-9])(fb|ig)([^a-z0-9]|$)|(^|[^a-z0-9])(facebook|instagram|threads\\.(net|com)|twitter|bsky|linkedin|lnkd\\.in|pinterest|reddit|vk\\.com|tiktok|snapchat|tumblr|wechat|whatsapp|telegram|discord|mastodon|quora)|(^|\\.)(t\\.co|x\\.com)$', 'i'),
-  shopping: createRegex('(^|[^a-z0-9])(amazon|ebay|etsy|shopify|walmart|mercadolibre|alibaba|aliexpress|zalando)', 'i'),
-  shopping_campaign: createRegex('(^|[^a-df-z])shop|shopping', 'i'),
   video: createRegex('(^|[^a-z0-9])(youtube|vimeo|netflix|twitch|dailymotion|hulu|disneyplus|wistia|youku)', 'i'),
+  shopping: createRegex('(^|[^a-z0-9])(amazon|ebay|etsy|shopify|walmart|mercadolibre|alibaba|aliexpress|zalando)', 'i'),
   email_source: createRegex('(^|[^a-z0-9])(email|e-mail|e_mail|e mail|newsletter|mailchimp|sendgrid|sparkpost|klaviyo|brevo|hubspot)', 'i'),
-  medium_ai: createRegex('^ai-assistant$', 'i'),
-  medium_paid: createRegex('^(.*cp.*|ppc|retargeting|paid.*)$', 'i'),
-  medium_display: createRegex('^(display|banner|expandable|interstitial|cpm)$', 'i'),
+  medium_paid: createRegex('^(.*cp.*|ppc|retargeting|paid.*|display|banner)$', 'i'),
   medium_email: createRegex('^(email|e-mail|e_mail|e mail|newsletter)$', 'i'),
-  medium_affiliate: createRegex('^affiliate$', 'i'),
-  medium_sms: createRegex('^sms$', 'i'),
-  medium_audio: createRegex('^audio$', 'i'),
-  medium_push: createRegex('push$|mobile|notification', 'i'),
-  medium_organic: createRegex('^organic$', 'i'),
-  medium_social: createRegex('^(social|social-network|social-media|sm|social network|social media)$', 'i'),
-  medium_video: createRegex('video', 'i'),
-  medium_referral: createRegex('^(referral|app|link)$', 'i')
+  medium_affiliate: createRegex('^affiliates?$', 'i'),
+  medium_referral: createRegex('^(referral|app|link)$', 'i'),
+  medium_social: createRegex('^(paid[-_ ]?)?(social|social[-_ ]network|social[-_ ]media|sm)$', 'i'),
+  medium_video: createRegex('^(paid[-_ ]?)?video$', 'i'),
+  medium_display: createRegex('^(display|banner|cpm|paid[-_ ]?display)$', 'i'),
+  medium_search: createRegex('^(organic|(paid[-_ ]?)?search)$', 'i'),
+  medium_shopping: createRegex('^(paid[-_ ]?)?shopping$', 'i'),
+  medium_ai: createRegex('^(ai|ai-assistant)$', 'i')
 };
 
+// The click IDs only an ad's click carries
+const ad_click_ids = { gclid: true, msclkid: true, wbraid: true, gbraid: true, dclid: true };
 
-// The source's GA4 category: the source itself without www., else its registrable domain
+
+// The source's category: the source itself without www., else its registrable domain
 function get_source_category(source) {
   var host = source.toLowerCase();
   if (host.indexOf('www.') === 0) { host = host.substring(4); }
@@ -1818,58 +1824,49 @@ function get_source_category(source) {
 }
 
 
-// GA4 default channel group rules on source, medium and campaign, with three differences: an explicit medium wins
-// over the source category, a click ID on a search engine source is paid search (Google Ads and Microsoft Ads
-// auto-tagging), and source names are also matched at the start of the source or of one of its parts
-// (google.it, googleads), for sources the GA4 list does not have.
-function get_channel_grouping(source, medium, campaign, campaign_click_id) {
+// Whether a session was paid: its medium says so when it has one; without one, an ad's click ID does
+function get_channel_paid(medium, campaign_click_id_type) {
+  const m = medium || '';
+  if (m !== '') return testRegex(channel_patterns.medium_paid, m);
+  return ad_click_ids.hasOwnProperty(campaign_click_id_type || '');
+}
+
+
+// Where a session came from, the first rule met winning: the medium when it names a place; no source, direct;
+// the source as the list or its name classes it; an ad's click ID from any other site, display; any other site,
+// referral; anything else, other. The Nameless Analytics README's channel grouping says each rule.
+function get_channel_grouping(source, medium, campaign_click_id_type) {
   const s = source || '';
   const m = medium || '';
-  const c = campaign || '';
-
-  if ((s === '' || s === 'direct') && m === '') return 'direct';
-  if (s === 'tagassistant.google.com') return 'gtm_debugger';
-  if (testRegex(channel_patterns.cross_network, c)) return 'cross_network';
-
-  const category = get_source_category(s);
-  const is_shopping = category === 'shopping' || (!category && testRegex(channel_patterns.shopping, s));
-  const is_search = category === 'search' || (!category && testRegex(channel_patterns.search, s) && !testRegex(channel_patterns.google_non_search, s));
-  const is_social = category === 'social' || (!category && testRegex(channel_patterns.social, s));
-  const is_video = category === 'video' || (!category && testRegex(channel_patterns.video, s));
+  const ad_click = m === '' && ad_click_ids.hasOwnProperty(campaign_click_id_type || '');
 
   if (m !== '') {
-    if (testRegex(channel_patterns.medium_ai, m)) return 'ai';
-    if (testRegex(channel_patterns.medium_paid, m)) {
-      if (is_shopping || testRegex(channel_patterns.shopping_campaign, c)) return 'paid_shopping';
-      if (is_search) return 'paid_search_engine';
-      if (is_social) return 'paid_social';
-      if (is_video) return 'paid_video';
-    }
-    if (testRegex(channel_patterns.medium_display, m)) return 'display';
-    if (testRegex(channel_patterns.medium_paid, m)) return 'paid_other';
     if (testRegex(channel_patterns.medium_email, m)) return 'email';
     if (testRegex(channel_patterns.medium_affiliate, m)) return 'affiliate';
-    if (testRegex(channel_patterns.medium_sms, m)) return 'sms';
-    if (testRegex(channel_patterns.medium_audio, m)) return 'audio';
-    if (testRegex(channel_patterns.medium_push, m)) return 'mobile_push';
-    if (testRegex(channel_patterns.medium_organic, m)) return 'organic_search_engine';
-    if (testRegex(channel_patterns.medium_social, m)) return 'organic_social';
-    if (testRegex(channel_patterns.medium_video, m)) return 'organic_video';
     if (testRegex(channel_patterns.medium_referral, m)) return 'referral';
+    if (testRegex(channel_patterns.medium_social, m)) return 'social';
+    if (testRegex(channel_patterns.medium_video, m)) return 'video';
+    if (testRegex(channel_patterns.medium_display, m)) return 'display';
+    if (testRegex(channel_patterns.medium_search, m)) return 'search';
+    if (testRegex(channel_patterns.medium_shopping, m)) return 'shopping';
+    if (testRegex(channel_patterns.medium_ai, m)) return 'ai';
   }
 
+  if (s === '' || s === 'direct') return (m === '' && !ad_click) ? 'direct' : 'other';
   if (testRegex(channel_patterns.ai, s)) return 'ai';
   if (testRegex(channel_patterns.webmail, s)) return 'email';
-  if (!category && testRegex(channel_patterns.google_non_search, s)) return 'referral';
-  if (is_search) return campaign_click_id ? 'paid_search_engine' : 'organic_search_engine';
-  if (is_social) return 'organic_social';
-  if (is_shopping || testRegex(channel_patterns.shopping_campaign, c)) return 'organic_shopping';
-  if (is_video) return 'organic_video';
-  if (testRegex(channel_patterns.email_source, s)) return 'email';
-  if (s.toLowerCase() === 'sms') return 'sms';
-  if (s.toLowerCase() === 'firebase') return 'mobile_push';
 
-  return (m !== '' || c !== '') ? 'unassigned' : 'referral';
+  const category = get_source_category(s);
+  if (category) return category;
+  if (testRegex(channel_patterns.google_non_search, s)) return 'referral';
+  if (testRegex(channel_patterns.search, s)) return 'search';
+  if (testRegex(channel_patterns.social, s)) return 'social';
+  if (testRegex(channel_patterns.video, s)) return 'video';
+  if (testRegex(channel_patterns.shopping, s)) return 'shopping';
+  if (testRegex(channel_patterns.email_source, s)) return 'email';
+
+  if (ad_click) return 'display';
+  return (m === '' && s.indexOf('.') >= 0) ? 'referral' : 'other';
 }
 
 
@@ -2232,11 +2229,13 @@ function send_to_firestore(event_data) {
             user_date: event_data.event_date,
             client_id: event_data.client_id,
             user_channel_grouping: event_data.event_data.channel_grouping,
+            user_channel_paid: event_data.event_data.channel_paid,
             user_source: event_data.event_data.source,
             user_tld_source: event_data.event_data.tld_source,
             user_campaign: event_data.event_data.campaign,
             user_campaign_id: event_data.event_data.campaign_id,
             user_campaign_click_id: event_data.event_data.campaign_click_id,
+            user_campaign_click_id_type: event_data.event_data.campaign_click_id_type,
             user_campaign_term: event_data.event_data.campaign_term,
             user_campaign_content: event_data.event_data.campaign_content,
             user_medium: event_data.event_data.medium,
@@ -2252,11 +2251,13 @@ function send_to_firestore(event_data) {
               session_number: 1,
               cross_domain_session: (event_data.event_data.cross_domain_id) ? 'Yes' : 'No',
               session_channel_grouping: event_data.event_data.channel_grouping,
+              session_channel_paid: event_data.event_data.channel_paid,
               session_source: event_data.event_data.source,
               session_tld_source: event_data.event_data.tld_source,
               session_campaign: event_data.event_data.campaign,
               session_campaign_id: event_data.event_data.campaign_id,
               session_campaign_click_id: event_data.event_data.campaign_click_id,
+              session_campaign_click_id_type: event_data.event_data.campaign_click_id_type,
               session_campaign_term: event_data.event_data.campaign_term,
               session_campaign_content: event_data.event_data.campaign_content,
               session_medium: event_data.event_data.medium,
@@ -2313,11 +2314,13 @@ function send_to_firestore(event_data) {
         const protected_user_keys = [
           "user_date",
           "user_channel_grouping",
+          "user_channel_paid",
           "user_source",
           "user_tld_source",
           "user_campaign",
           "user_campaign_id",
           "user_campaign_click_id",
+          "user_campaign_click_id_type",
           "user_campaign_term",
           "user_campaign_content",
           "user_medium",
@@ -2350,11 +2353,13 @@ function send_to_firestore(event_data) {
             session_number: actual_last_session ? actual_last_session.session_number + 1 : 1,
             cross_domain_session: (event_data.event_data.cross_domain_id) ? 'Yes' : 'No',
             session_channel_grouping: event_data.event_data.channel_grouping,
+            session_channel_paid: event_data.event_data.channel_paid,
             session_source: event_data.event_data.source,
             session_tld_source: event_data.event_data.tld_source,
             session_campaign: event_data.event_data.campaign,
             session_campaign_id: event_data.event_data.campaign_id,
             session_campaign_click_id: event_data.event_data.campaign_click_id,
+            session_campaign_click_id_type: event_data.event_data.campaign_click_id_type,
             session_campaign_term: event_data.event_data.campaign_term,
             session_campaign_content: event_data.event_data.campaign_content,
             session_medium: event_data.event_data.medium,
@@ -2402,11 +2407,13 @@ function send_to_firestore(event_data) {
           "session_number",
           "cross_domain_session",
           "session_channel_grouping",
+          "session_channel_paid",
           "session_source",
           "session_tld_source",
           "session_campaign",
           "session_campaign_id",
           "session_campaign_click_id",
+          "session_campaign_click_id_type",
           "session_campaign_term",
           "session_campaign_content",
           "session_medium",

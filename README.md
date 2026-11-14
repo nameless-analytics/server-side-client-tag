@@ -69,11 +69,13 @@ These user parameters are reserved and can't be modified:
 - client_id
 - sessions
 - user_channel_grouping
+- user_channel_paid
 - user_source
 - user_tld_source
 - user_campaign
 - user_campaign_id
 - user_campaign_click_id
+- user_campaign_click_id_type
 - user_campaign_content
 - user_medium
 - user_campaign_term
@@ -114,11 +116,13 @@ These session parameters are reserved and can't be modified:
 - session_number
 - cross_domain_session
 - session_channel_grouping
+- session_channel_paid
 - session_source
 - session_tld_source
 - session_campaign
 - session_campaign_id
 - session_campaign_click_id
+- session_campaign_click_id_type
 - session_campaign_term
 - session_campaign_content
 - session_medium
@@ -165,10 +169,12 @@ The browser resolves `dataLayer`, Configuration Variable and Client-side Tracker
 These event parameters are reserved and can't be modified:
 - event_type
 - channel_grouping
+- channel_paid
 - source
 - campaign
 - campaign_id
 - campaign_click_id
+- campaign_click_id_type
 - campaign_term
 - campaign_content
 - medium
