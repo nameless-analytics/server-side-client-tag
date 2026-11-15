@@ -520,8 +520,11 @@ if (check_origin()) {
       if (data.enable_bot_protection) {
         const bad_agents = ["curl", "wget", "python", "requests", "httpie", "go-http-client", "java", "okhttp", "libwww", "perl", "axios", "node", "fetch", "php", "guzzle", "ruby", "faraday", "rest-client", "gptbot", "chatgpt", "anthropic", "claude", "perplexity", "bytespider", "ccbot", "ahrefs", "semrush", "dotbot", "mj12", "rogerbot", "nmap", "zgrab", "masscan", "shodan", "bot", "crawler", "spider", "scraper", "headless", "phantomjs", "selenium", "puppeteer", "playwright", "cypress", "electron"];
 
+        // Cubot is a phone brand, not a bot: its name is left out of what the signatures are looked for in
+        const checked_user_agent = request_user_agent.split('cubot').join('');
+
         for (var i = 0; i < bad_agents.length; i++) {
-          if (request_user_agent.indexOf(bad_agents[i]) !== -1) {
+          if (checked_user_agent.indexOf(bad_agents[i]) !== -1) {
             message = '🔴 Invalid User-Agent header value. Request from bot';
             status_code = 403;
             claim_request({ event_name: event_name }, status_code, message);

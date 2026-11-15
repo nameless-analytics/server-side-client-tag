@@ -223,7 +223,7 @@ Reject requests whose source address exactly matches an entry in **Banned IPs**.
 Use an edge rate limiter or WAF for broader traffic control; this list is intended for known addresses.
 
 ### Enable Bot protection
-Reject requests when the `User-Agent` contains one of the built-in signatures. Matching is case-insensitive and can produce false positives, so verify legitimate automated integrations before enabling it.
+Reject requests when the `User-Agent` contains one of the built-in signatures. Matching is case-insensitive and can produce false positives, so verify legitimate automated integrations before enabling it. The phone brand Cubot is not read as `bot`.
 
 <details><summary>Built-in User-Agent signatures</summary>
 
