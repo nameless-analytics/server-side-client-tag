@@ -94,873 +94,9 @@ const event_id = event_data.event_id;
 event_data.user_data = event_data.user_data || {};
 event_data.session_data = event_data.session_data || {};
 event_data.gtm_data = event_data.gtm_data || {};
-if (event_data.event_data) {
-  // Optional in the payload: sources that do not send it, such as the Streaming Protocol, have none
-  if (event_data.event_data.medium === undefined) { event_data.event_data.medium = null; }
-  if (event_data.event_data.campaign_click_id_type === undefined) { event_data.event_data.campaign_click_id_type = null; }
-  event_data.event_data.channel_grouping = get_channel_grouping(event_data_obj.source, event_data_obj.medium, event_data_obj.campaign_click_id_type);
-  event_data.event_data.channel_paid = get_channel_paid(event_data_obj.medium, event_data_obj.campaign_click_id_type);
-}
 
-
-// Cookie values
-const user_cookie_name = (data.change_cookie_prefix) ? data.cookie_prefix + '_na_u' : 'na_u';
-const user_cookie_value = getCookieValues(user_cookie_name)[0];
-
-const session_cookie_name = (data.change_cookie_prefix) ? data.cookie_prefix + '_na_s' : 'na_s';
-const session_cookie_value = getCookieValues(session_cookie_name)[0];
-
-
-// Validate cookie format
-function validate_user_cookie(cookie) {
-  if (!cookie) return true;
-  const pattern = createRegex('^[A-Za-z0-9]{15}$');
-  return testRegex(pattern, cookie);
-}
-
-function validate_session_cookie(cookie) {
-  if (!cookie) return true;
-  const pattern = createRegex('^[A-Za-z0-9]{15}_[A-Za-z0-9]{15}-[A-Za-z0-9]{15}$');
-  return testRegex(pattern, cookie);
-}
-
-// Validate cross-domain ID format (session_id: 15 char + _ + 15 char)
-function validate_cross_domain_id(id) {
-  if (!id) return false;
-  const pattern = createRegex('^[A-Za-z0-9]{15}_[A-Za-z0-9]{15}$');
-  return testRegex(pattern, id);
-}
-
-
-// Validate payload schema before deriving values or writing data
-function validate_payload_schema(payload) {
-  const errors = [];
-  const is_get_user_data = payload.event_name === 'get_user_data';
-  const allowed_fields = (is_get_user_data) ?
-    ['event_name', 'event_origin'] :
-    ['user_data', 'session_data', 'page_date', 'page_id', 'page_data', 'event_date', 'event_timestamp', 'event_id', 'event_name', 'event_origin', 'event_data', 'datalayer', 'ecommerce', 'gtm_data', 'consent_data'];
-
-  Object.keys(payload).forEach((key) => {
-    if (allowed_fields.indexOf(key) === -1) {
-      errors.push('unsupported top-level parameter "' + key + '"');
-    }
-  });
-
-  if (is_get_user_data) {
-    if (getType(payload.event_origin) !== 'string') {
-      errors.push('event_origin must be a string');
-    } else if (payload.event_origin !== 'Website' && payload.event_origin !== 'Streaming Protocol') {
-      errors.push('event_origin must be Website or Streaming Protocol');
-    }
-
-    return errors;
-  }
-
-  if (getType(payload.page_date) === 'undefined' || getType(payload.page_date) === 'null') {
-    errors.push('page_date is required');
-  } else if (!validate_iso_date(payload.page_date)) {
-    errors.push('page_date must be a valid date in YYYY-MM-DD format');
-  }
-
-  const valid_page_id = validate_partial_page_id(payload.page_id);
-  if (getType(payload.page_id) === 'undefined' || getType(payload.page_id) === 'null') {
-    errors.push('page_id is required');
-  } else if (!valid_page_id) {
-    errors.push('page_id must be a 15-character alphanumeric string');
-  }
-
-  if (getType(payload.page_data) === 'undefined' || getType(payload.page_data) === 'null') {
-    errors.push('page_data is required');
-  } else if (getType(payload.page_data) !== 'object' || Object.keys(payload.page_data).length === 0) {
-    errors.push('page_data must be a non-empty object');
-  } else {
-    validate_required_nullable_string(payload.page_data, 'page_title', errors);
-    validate_required_string(payload.page_data, 'page_hostname', errors);
-    validate_required_nullable_string(payload.page_data, 'page_url', errors);
-    validate_required_nullable_string(payload.page_data, 'page_path', errors);
-    validate_required_positive_integer(payload.page_data, 'page_load_timestamp', errors);
-  }
-
-  if (getType(payload.event_date) === 'undefined' || getType(payload.event_date) === 'null') {
-    errors.push('event_date is required');
-  } else if (!validate_iso_date(payload.event_date)) {
-    errors.push('event_date must be a valid date in YYYY-MM-DD format');
-  }
-
-  if (getType(payload.event_timestamp) === 'undefined' || getType(payload.event_timestamp) === 'null') {
-    errors.push('event_timestamp is required');
-  } else if (getType(payload.event_timestamp) !== 'number' || payload.event_timestamp <= 0 || payload.event_timestamp % 1 !== 0) {
-    errors.push('event_timestamp must be a positive integer');
-  }
-
-  const valid_event_id = validate_partial_event_id(payload.event_id);
-  if (getType(payload.event_id) === 'undefined' || getType(payload.event_id) === 'null') {
-    errors.push('event_id is required');
-  } else if (!valid_event_id) {
-    errors.push('event_id must contain two 15-character alphanumeric segments separated by an underscore');
-  } else if (valid_page_id && payload.event_id.indexOf(payload.page_id + '_') !== 0) {
-    errors.push('event_id must start with page_id followed by an underscore');
-  }
-
-  if (getType(payload.event_name) === 'undefined' || getType(payload.event_name) === 'null') {
-    errors.push('event_name is required');
-  } else if (getType(payload.event_name) !== 'string' || payload.event_name.length === 0) {
-    errors.push('event_name must be a non-empty string');
-  }
-
-  if (getType(payload.event_origin) === 'undefined' || getType(payload.event_origin) === 'null') {
-    errors.push('event_origin is required');
-  } else if (getType(payload.event_origin) !== 'string') {
-    errors.push('event_origin must be a string');
-  } else if (payload.event_origin !== 'Website' && payload.event_origin !== 'Streaming Protocol') {
-    errors.push('event_origin must be Website or Streaming Protocol');
-  }
-
-  const valid_event_data = getType(payload.event_data) === 'object' && Object.keys(payload.event_data).length > 0;
-  if (getType(payload.event_data) === 'undefined' || getType(payload.event_data) === 'null') {
-    errors.push('event_data is required');
-  } else if (!valid_event_data) {
-    errors.push('event_data must be a non-empty object');
-  } else if (getType(payload.event_data.event_type) === 'undefined' || getType(payload.event_data.event_type) === 'null') {
-    errors.push('event_data.event_type is required');
-  } else if (getType(payload.event_data.event_type) !== 'string') {
-    errors.push('event_data.event_type must be a string');
-  } else if (payload.event_name === 'page_view' && payload.event_data.event_type !== 'page_view') {
-    errors.push('event_data.event_type must be page_view when event_name is page_view');
-  } else if (payload.event_name !== 'page_view' && payload.event_data.event_type !== 'event') {
-    errors.push('event_data.event_type must be event when event_name is not page_view');
-  }
-
-  if (valid_event_data) {
-    validate_required_nullable_string(payload.event_data, 'source', errors);
-    validate_required_nullable_string(payload.event_data, 'campaign', errors);
-    validate_required_nullable_string(payload.event_data, 'campaign_id', errors);
-    validate_required_nullable_string(payload.event_data, 'campaign_click_id', errors);
-    validate_required_nullable_string(payload.event_data, 'campaign_term', errors);
-    validate_required_nullable_string(payload.event_data, 'campaign_content', errors);
-    validate_optional_nullable_string(payload.event_data, 'medium', errors);
-    validate_optional_nullable_string(payload.event_data, 'campaign_click_id_type', errors);
-  }
-
-  validate_optional_object(payload, 'user_data', errors);
-  validate_optional_object(payload, 'session_data', errors);
-  validate_optional_object(payload, 'gtm_data', errors);
-  validate_optional_object(payload, 'consent_data', errors);
-
-  validate_consent_data_values(payload.consent_data, errors);
-  validate_gtm_data_values(payload.gtm_data, errors);
-
-  if (getType(payload.consent_data) === 'object' && Object.keys(payload.consent_data).length === 0) {
-    errors.push('consent_data must be a non-empty object or null');
-  }
-
-  if (getType(payload.datalayer) !== 'undefined' && getType(payload.datalayer) !== 'null' && getType(payload.datalayer) !== 'array') {
-    errors.push('datalayer must be an array or null');
-  }
-
-  if (getType(payload.ecommerce) !== 'undefined' && getType(payload.ecommerce) !== 'null' && getType(payload.ecommerce) !== 'object') {
-    errors.push('ecommerce must be an object or null');
-  }
-
-  return errors;
-}
-
-
-function validate_optional_object(payload, key, errors) {
-  const value_type = getType(payload[key]);
-
-  if (value_type !== 'undefined' && value_type !== 'null' && value_type !== 'object') {
-    errors.push(key + ' must be an object or null');
-  }
-}
-
-
-function validate_consent_data_values(consent_data, errors) {
-  if (getType(consent_data) !== 'object') { return; }
-
-  Object.keys(consent_data).forEach((key) => {
-    const value_type = getType(consent_data[key]);
-
-    if (value_type !== 'string' && value_type !== 'null') {
-      errors.push('consent_data.' + key + ' must be a string or null');
-    }
-  });
-}
-
-
-function validate_gtm_data_values(gtm_data, errors) {
-  if (getType(gtm_data) !== 'object') { return; }
-
-  Object.keys(gtm_data).forEach((key) => {
-    const value = gtm_data[key];
-    const value_type = getType(value);
-
-    if (value_type !== 'string' && value_type !== 'null' && (value_type !== 'number' || value % 1 !== 0)) {
-      errors.push('gtm_data.' + key + ' must be a string, integer or null');
-    }
-  });
-}
-
-
-function validate_reserved_parameters(payload) {
-  const errors = [];
-  const reserved_user_parameters = [
-    'user_date',
-    'client_id',
-    'sessions',
-    'user_channel_grouping',
-    'user_channel_paid',
-    'user_source',
-    'user_tld_source',
-    'user_campaign',
-    'user_campaign_id',
-    'user_campaign_click_id',
-    'user_campaign_click_id_type',
-    'user_campaign_term',
-    'user_campaign_content',
-    'user_medium',
-    'user_device_type',
-    'user_country',
-    'user_city',
-    'user_language',
-    'user_first_session_timestamp',
-    'user_last_session_timestamp'
-  ];
-  const reserved_session_parameters = [
-    'session_date',
-    'session_id',
-    'session_number',
-    'cross_domain_session',
-    'session_channel_grouping',
-    'session_channel_paid',
-    'session_source',
-    'session_tld_source',
-    'session_campaign',
-    'session_campaign_id',
-    'session_campaign_click_id',
-    'session_campaign_click_id_type',
-    'session_campaign_term',
-    'session_campaign_content',
-    'session_medium',
-    'session_device_type',
-    'session_country',
-    'session_city',
-    'session_language',
-    'session_hostname',
-    'session_browser_name',
-    'session_landing_page_category',
-    'session_landing_page_url',
-    'session_landing_page_path',
-    'session_landing_page_title',
-    'session_exit_page_category',
-    'session_exit_page_url',
-    'session_exit_page_path',
-    'session_exit_page_title',
-    'session_start_timestamp',
-    'session_end_timestamp'
-  ];
-
-  Object.keys(payload.user_data || {}).forEach((key) => {
-    if (reserved_user_parameters.indexOf(key) !== -1) {
-      errors.push('user_data.' + key + ' is reserved');
-    }
-  });
-
-  Object.keys(payload.session_data || {}).forEach((key) => {
-    if (reserved_session_parameters.indexOf(key) !== -1) {
-      errors.push('session_data.' + key + ' is reserved');
-    }
-  });
-
-  return errors;
-}
-
-
-function validate_required_string(container, key, errors) {
-  const value_type = getType(container[key]);
-
-  if (value_type === 'undefined') {
-    errors.push(key + ' is required');
-  } else if (value_type !== 'string' || container[key].length === 0) {
-    errors.push(key + ' must be a non-empty string');
-  }
-}
-
-
-function validate_required_nullable_string(container, key, errors) {
-  const value_type = getType(container[key]);
-
-  if (value_type === 'undefined') {
-    errors.push(key + ' is required');
-  } else if (value_type !== 'string' && value_type !== 'null') {
-    errors.push(key + ' must be a string or null');
-  }
-}
-
-
-function validate_optional_nullable_string(container, key, errors) {
-  const value_type = getType(container[key]);
-
-  if (value_type !== 'undefined' && value_type !== 'string' && value_type !== 'null') {
-    errors.push(key + ' must be a string or null');
-  }
-}
-
-
-function validate_required_positive_integer(container, key, errors) {
-  const value = container[key];
-  const value_type = getType(value);
-
-  if (value_type === 'undefined' || value_type === 'null') {
-    errors.push(key + ' is required');
-  } else if (value_type !== 'number' || value <= 0 || value % 1 !== 0) {
-    errors.push(key + ' must be a positive integer');
-  }
-}
-
-
-function validate_iso_date(value) {
-  if (getType(value) !== 'string') return false;
-
-  const pattern = createRegex('^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$');
-  if (!testRegex(pattern, value)) return false;
-
-  const parts = value.split('-');
-  const year = makeNumber(parts[0]);
-  const month = makeNumber(parts[1]);
-  const day = makeNumber(parts[2]);
-  const days_in_month = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-  const leap_year = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
-
-  if (leap_year) days_in_month[1] = 29;
-
-  return year >= 1 && day <= days_in_month[month - 1];
-}
-
-
-function validate_partial_page_id(id) {
-  if (getType(id) !== 'string') return false;
-  const pattern = createRegex('^[A-Za-z0-9]{15}$');
-  return testRegex(pattern, id);
-}
-
-
-function validate_partial_event_id(id) {
-  if (getType(id) !== 'string') return false;
-  const pattern = createRegex('^[A-Za-z0-9]{15}_[A-Za-z0-9]{15}$');
-  return testRegex(pattern, id);
-}
-
-
-// --------------------------------------------------------------------------------------------------------------
-// CHECK REQUESTS
-// --------------------------------------------------------------------------------------------------------------
-
-// Check request endpoint
-if (data.enable_logs) { log('NAMELESS ANALYTICS'); }
-if (data.enable_logs) { log('CLIENT TAG CONFIGURATION'); }
-log_client_tag_configuration();
-
-// Check request origin, required fields and claim requests
-if (check_origin()) {
-  if (!check_ip()) {
-
-    if (data.enable_logs) { log('CHECKING REQUEST'); }
-
-    if (event_name === 'get_user_data') {
-      if (data.enable_logs) { log('👉 Request type: Get user data'); }
-    } else {
-      if (data.enable_logs) { log('👉 Request type:', event_origin); }
-    }
-
-    if (data.enable_logs) { log('👉 Event name: ', event_data.event_name); }
-
-    if (request_method === 'POST') {
-      // REFUSE REQUESTS
-      // Check if user or session cookie is missing for get_user_data requests
-      if (event_name === 'get_user_data' && (user_cookie_value === undefined || session_cookie_value === undefined)) {
-        if (data.enable_logs) { log('👉 Request from get_user_data event'); }
-
-        if (data.enable_logs) { log('CHECKING COOKIES'); }
-
-        if (user_cookie_value === undefined) {
-          message = '🔴 User cookie not found. No cross-domain URL decoration will be applied';
-          status_code = 400;
-
-          claim_request(set_ids_get_user_data(), status_code, message);
-          return;
-        } else if (session_cookie_value === undefined) {
-          message = '🔴 Session cookie not found. No cross-domain URL decoration will be applied';
-          status_code = 400;
-
-          claim_request(set_ids_get_user_data(), status_code, message);
-          return;
-        }
-      }
-
-      // Check User-Agent header (Bot detection)
-      const request_user_agent = (getRequestHeader('User-Agent') || '').toLowerCase();
-
-      if (!request_user_agent) {
-        message = '🔴 Missing User-Agent header. Request from bot';
-        status_code = 403;
-
-        claim_request({ event_name: event_name }, status_code, message);
-        return;
-      }
-
-      if (event_origin === 'Streaming Protocol' && request_user_agent !== 'nameless analytics - streaming protocol') {
-        message = '🔴 Invalid User-Agent header value. Request from bot';
-        status_code = 403;
-
-        claim_request({ event_name: event_name }, status_code, message);
-        return;
-      }
-
-      if (data.enable_bot_protection) {
-        const bad_agents = ["curl", "wget", "python", "requests", "httpie", "go-http-client", "java", "okhttp", "libwww", "perl", "axios", "node", "fetch", "php", "guzzle", "ruby", "faraday", "rest-client", "gptbot", "chatgpt", "anthropic", "claude", "perplexity", "bytespider", "ccbot", "ahrefs", "semrush", "dotbot", "mj12", "rogerbot", "nmap", "zgrab", "masscan", "shodan", "bot", "crawler", "spider", "scraper", "headless", "phantomjs", "selenium", "puppeteer", "playwright", "cypress", "electron"];
-
-        // Cubot is a phone brand, not a bot: its name is left out of what the signatures are looked for in
-        const checked_user_agent = request_user_agent.split('cubot').join('');
-
-        for (var i = 0; i < bad_agents.length; i++) {
-          if (checked_user_agent.indexOf(bad_agents[i]) !== -1) {
-            message = '🔴 Invalid User-Agent header value. Request from bot';
-            status_code = 403;
-            claim_request({ event_name: event_name }, status_code, message);
-            return;
-          }
-        }
-      }
-
-      // Check Streaming Protocol requests API key
-      if (event_origin === 'Streaming Protocol') {
-        if (!data.add_api_key) {
-          message = '🔴 Add API key for Streaming Protocol is not enabled.';
-          status_code = 403;
-
-          claim_request({ event_name: event_name }, status_code, message);
-          return;
-        }
-
-        if (event_api_key !== api_key) {
-          message = '🔴 Invalid API key';
-          status_code = 401;
-
-          claim_request({ event_name: event_name }, status_code, message);
-          return;
-        }
-      }
-
-      // Check if page_view is from Streaming Protocol
-      if (event_name === 'page_view' && event_origin === 'Streaming Protocol') {
-        message = '🔴 Invalid event_name. Can\'t send page_view from Streaming Protocol';
-        status_code = 400;
-
-        claim_request({ event_name: event_name }, status_code, message);
-        return;
-      }
-
-      // Check if user cookie is missing
-      if (event_origin === 'Website' && event_data.event_name !== 'page_view' && event_data.event_name !== 'get_user_data' && user_cookie_value === undefined) {
-        message = '🔴 Orphan event: missing user cookie. Trigger a page_view event first to create a new user and a new session';
-        status_code = 400;
-
-        claim_request({ event_name: event_name }, status_code, message);
-        return;
-      }
-
-      // Check if session cookie is missing
-      if (event_origin === 'Website' && event_data.event_name !== 'page_view' && event_data.event_name !== 'get_user_data' && session_cookie_value === undefined) {
-        message = '🔴 Orphan event: missing session cookie. Trigger a page_view event first to create a new session';
-        status_code = 400;
-
-        claim_request({ event_name: event_name }, status_code, message);
-        return;
-      }
-
-      // Check if cookie format is valid
-      if (!validate_user_cookie(user_cookie_value) || !validate_session_cookie(session_cookie_value)) {
-        message = '🔴 Invalid cookie format';
-        status_code = 400;
-
-        claim_request({ event_name: event_name }, status_code, message);
-        return;
-      }
-
-      // CLAIM REQUESTS 
-      // Claim get user data requests
-      if (event_name === 'get_user_data') {
-        if (data.enable_logs) { log('🟢 Request correct, user and session cookies found. Cross-domain URL decoration will be applied'); }
-
-        message = '🟢 Request claimed successfully';
-        status_code = 200;
-
-        claim_request(set_ids_get_user_data(), status_code, message);
-        return;
-      } else {
-        // Claim standard requests
-        if (data.enable_logs) { log('🟢 Request correct'); }
-
-        const processed_event_data = build_payload(set_ids(event_data));
-        const reserved_parameter_errors = validate_reserved_parameters(processed_event_data);
-
-        if (reserved_parameter_errors.length > 0) {
-          message = '🔴 Invalid payload schema: ' + reserved_parameter_errors.join('; ');
-          status_code = 400;
-
-          claim_request({ event_name: processed_event_data.event_name }, status_code, message);
-          return;
-        }
-
-        claim_request(processed_event_data, null, '');
-        return;
-      }
-
-    } else {
-      return_method_not_allowed_response();
-      return;
-    }
-  } else {
-    if (data.enable_logs) { log('CHECKING REQUEST'); }
-
-    // RETURN RESPONSE ERRORS
-    message = '🔴 Request IP not authorized';
-    status_code = 403;
-
-    claim_request({ event_name: event_name }, status_code, message);
-    return;
-  }
-} else {
-  if (data.enable_logs) { log('CHECKING REQUEST'); }
-
-  // RETURN RESPONSE ERRORS
-  message = '🔴 Request origin not authorized';
-  status_code = 403;
-
-  claim_request({ event_name: event_name }, status_code, message);
-  return;
-}
-
-
-// Log the active client tag configuration
-// Printed in full before any validation runs, so the block is complete
-// even when the request is refused by the first check.
-function log_client_tag_configuration() {
-  if (!data.enable_logs) { return; }
-
-  var authorized_domains = '';
-  if (data.add_authorized_domains) {
-    const authorized_domains_list = data.authorized_domains_list;
-    for (var i = 0; i < authorized_domains_list.length; i++) {
-      authorized_domains = authorized_domains.concat(', ', computeEffectiveTldPlusOne(authorized_domains_list[i].authorized_domain));
-    }
-  }
-
-  var banned_ips = '';
-  if (data.add_banned_ips) {
-    const banned_ip_list = data.banned_ips_list;
-    for (var j = 0; j < banned_ip_list.length; j++) {
-      banned_ips = banned_ips.concat(', ', banned_ip_list[j].banned_ip);
-    }
-  }
-
-  log('👉 Endpoint:', endpoint);
-  log('👉 Authorized origins:', (data.add_authorized_domains) ? authorized_domains.slice(2) : ' All');
-  if (data.enable_bot_protection) { log('👉 Bot detection enabled'); }
-  log('👉 Unauthorized IPs:', (data.add_banned_ips) ? banned_ips.slice(2) : 'None');
-}
-
-
-// Check request origin
-function check_origin() {
-  const authorized_domains_list = (data.add_authorized_domains) ? data.authorized_domains_list : [{ authorized_domain: request_origin }];
-
-  for (var i = 0; i < authorized_domains_list.length; i++) {
-    if (computeEffectiveTldPlusOne(request_origin) === computeEffectiveTldPlusOne(authorized_domains_list[i].authorized_domain)) {
-      return true;
-    }
-  }
-}
-
-
-// Check request ip
-function check_ip() {
-  const banned_ip_list = (data.add_banned_ips) ? data.banned_ips_list : [{ banned_ip: null }];
-
-  for (var i = 0; i < banned_ip_list.length; i++) {
-    if (request_ip === banned_ip_list[i].banned_ip) {
-      return true;
-    }
-  }
-}
-
-
-// --------------------------------------------------------------------------------------------------------------
-// HANDLE IDS
-// --------------------------------------------------------------------------------------------------------------
-
-// Handle ids for get_user_data requests (For cross-domain only)
-function set_ids_get_user_data() {
-  const client_id = user_cookie_value || 'undefined';
-  const session_id = session_cookie_value || 'undefined';
-  const page_id = (session_cookie_value) ? session_cookie_value.split('-')[1] : 'undefined';
-
-  const event_data = {
-    event_name: 'get_user_data',
-    client_id: client_id,
-    session_id: session_id.split('-')[0] || 'undefined',
-    page_id: page_id
-  };
-
-  return event_data;
-}
-
-
-// Handle ids for standard requests
-function set_ids(event_data) {
-  const page_id = event_data.page_id;
-  const event_id = event_data.event_id;
-  const raw_cross_domain_id = event_data.event_data.cross_domain_id;
-
-  // Accept the cross-domain ID only if it has a valid session_id format
-  const cross_domain_id = validate_cross_domain_id(raw_cross_domain_id) ? raw_cross_domain_id : null;
-
-  if (raw_cross_domain_id && !cross_domain_id) {
-    if (data.enable_logs) { log('🟠 Invalid cross-domain ID format. Value ignored.'); }
-    event_data.event_data.cross_domain_id = null;
-  }
-
-  // Cross-domain request
-  if (event_origin === 'Website' && cross_domain_id) {
-    const cross_domain_client_id = cross_domain_id.split('_')[0];
-    const cross_domain_session_id = cross_domain_id;
-
-    if (data.enable_logs) { log('👉 Cross-domain visit'); }
-
-    // With an active session
-    if (session_cookie_value) {
-      // With different session id
-      if (cross_domain_session_id !== session_cookie_value.split('-')[0]) {
-        event_data.client_id = cross_domain_client_id;
-        event_data.session_id = cross_domain_session_id;
-        event_data.page_id = cross_domain_session_id + '-' + page_id;
-        event_data.event_id = cross_domain_session_id + '-' + event_id;
-
-        if (data.enable_logs) { log('👉 Create new client_id: ', cross_domain_client_id + ' and new session_id: ', cross_domain_session_id); }
-
-        // With the same session id   
-      } else {
-        const old_client_id = user_cookie_value;
-        const old_session_id = session_cookie_value.split('-')[0];
-
-        event_data.client_id = old_client_id;
-        event_data.session_id = old_session_id;
-        event_data.page_id = old_session_id + '-' + page_id;
-        event_data.event_id = old_session_id + '-' + event_id;
-
-        if (data.enable_logs) { log('CHECKING USER AND SESSION COOKIES'); }
-        if (data.enable_logs) { log('👉 Same client_id, same session_id'); }
-        if (data.enable_logs) { log('👉 Extend cookies max-age'); }
-      }
-
-      // Without an active session         
-    } else {
-      event_data.client_id = cross_domain_client_id;
-      event_data.session_id = cross_domain_session_id;
-      event_data.page_id = cross_domain_session_id + '-' + page_id;
-      event_data.event_id = cross_domain_session_id + '-' + event_id;
-
-      if (data.enable_logs) { log('CHECKING USER AND SESSION COOKIES'); }
-      if (data.enable_logs) { log('👉 Returning user, no active session'); }
-      if (data.enable_logs) { log('👉 Same client_id: ', cross_domain_client_id + ', create new session_id: ', cross_domain_session_id); }
-    }
-
-    // No cross-domain request
-  } else {
-    // New user
-    if (user_cookie_value === undefined) {
-      const new_client_id = generate_alphanumeric();
-      const new_session_id = new_client_id + '_' + generate_alphanumeric();
-
-      event_data.client_id = new_client_id;
-      event_data.session_id = new_session_id;
-      event_data.page_id = new_session_id + '-' + page_id;
-      event_data.event_id = new_session_id + '-' + event_id;
-
-      if (data.enable_logs) { log('CHECKING USER AND SESSION COOKIES'); }
-      if (data.enable_logs) { log('👉 New user, no active session'); }
-      if (data.enable_logs) { log('👉 Create new client_id: ', new_client_id + ' and new session_id: ', new_session_id); }
-
-      // Returning user
-    } else if (user_cookie_value !== undefined) {
-      // No session cookie
-      if (session_cookie_value === undefined) {
-        const old_client_id = user_cookie_value;
-        const new_session_id = old_client_id + '_' + generate_alphanumeric();
-
-        event_data.client_id = old_client_id;
-        event_data.session_id = new_session_id;
-        event_data.page_id = new_session_id + '-' + page_id;
-        event_data.event_id = new_session_id + '-' + event_id;
-
-        if (data.enable_logs) { log('CHECKING USER AND SESSION COOKIES'); }
-        if (data.enable_logs) { log('👉 Returning user, no active session'); }
-        if (data.enable_logs) { log('👉 Same client_id: ', old_client_id + ', create new session_id: ', new_session_id); }
-
-        // Yes session cookie
-      } else {
-        const old_client_id = user_cookie_value;
-        const old_session_id = session_cookie_value.split('-')[0];
-
-        event_data.client_id = old_client_id;
-        event_data.session_id = old_session_id;
-        event_data.page_id = old_session_id + '-' + page_id;
-        event_data.event_id = old_session_id + '-' + event_id;
-
-        if (data.enable_logs) { log('CHECKING USER AND SESSION COOKIES'); }
-        if (data.enable_logs) { log('👉 Same client_id, same session_id'); }
-        if (data.enable_logs) { log('👉 Extend cookies max-age'); }
-      }
-    }
-  }
-
-  return event_data;
-}
-
-
-// Generate random alphanumeric ID 
-function generate_alphanumeric() {
-  var max_length = 15; // Change this to the desired length
-  var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  var alphanumeric_id = '';
-
-  for (var i = 0; i < max_length; i++) {
-    alphanumeric_id += chars.charAt(generateRandom(0, chars.length - 1));
-  }
-
-  return alphanumeric_id;
-}
-
-
-// --------------------------------------------------------------------------------------------------------------
-// BUILD PAYLOAD
-// --------------------------------------------------------------------------------------------------------------
-
-// Build payload data for standard requests
-function build_payload(event_data) {
-  // Add additional info    
-
-  // When hosting GTM Server-side on Cloud Run, follow this guide to correctly configure geolocation headers: https://www.simoahava.com/analytics/cloud-run-server-side-tagging-google-tag-manager/#add-geolocation-headers-to-the-traffic
-
-  event_data.event_data.country = getRequestHeader('X-Appengine-Country') || getRequestHeader('X-Gclb-Country') || getRequestHeader('X-GEO-Country');
-  event_data.event_data.city = getRequestHeader('X-Appengine-City') || getRequestHeader('X-Gclb-City') || getRequestHeader('X-GEO-City');
-
-  event_data.gtm_data.ss_hostname = getRequestHeader('Host');
-  event_data.gtm_data.ss_container_id = getContainerVersion().containerId;
-  event_data.gtm_data.ss_tag_name = getClientName();
-  event_data.gtm_data.ss_tag_id = null;
-  event_data.gtm_data.processing_event_timestamp = getTimestampMillis();
-  event_data.gtm_data.content_length = makeNumber(getRequestHeader('content-length'));
-
-  // User data
-  // Add or override user ID
-  if (data.override_user_id) {
-    event_data.session_data.user_id = (data.user_id === "null") ? null : data.user_id;
-  }
-
-  // Add user data from tag fields
-  if (data.add_user_parameters) {
-    const user_params = data.user_params_to_add;
-
-    if (user_params !== undefined) {
-      for (var i = 0; i < user_params.length; i++) {
-        const param_name = user_params[i].param_name;
-        const param_value = user_params[i].param_value;
-
-        event_data.user_data[param_name] = param_value;
-      }
-    }
-  }
-
-  // Remove user data from tag fields
-  if (data.remove_user_parameters) {
-    const user_params = data.user_params_to_remove;
-
-    if (user_params !== undefined) {
-      for (var i = 0; i < user_params.length; i++) {
-        const param_name = user_params[i].param_name;
-
-        Object.delete(event_data.user_data, param_name);
-      }
-    }
-  }
-
-
-  // Session data
-  // Add session data from tag fields
-  if (data.add_session_parameters) {
-    const session_params = data.session_params_to_add;
-
-    if (session_params !== undefined) {
-      for (var i = 0; i < session_params.length; i++) {
-        const param_name = session_params[i].param_name;
-        const param_value = session_params[i].param_value;
-
-        event_data.session_data[param_name] = param_value;
-      }
-    }
-  }
-
-  // Remove session data from tag fields
-  if (data.remove_session_parameters) {
-    const session_params = data.session_params_to_remove;
-
-    if (session_params !== undefined) {
-      for (var i = 0; i < session_params.length; i++) {
-        const param_name = session_params[i].param_name;
-
-        Object.delete(event_data.session_data, param_name);
-      }
-    }
-  }
-
-
-  // Event data
-  if (event_data.event_data.source) {
-    event_data.event_data.tld_source = (computeEffectiveTldPlusOne(event_data.event_data.source) !== '') ? computeEffectiveTldPlusOne(event_data.event_data.source) : event_data.event_data.source;
-  }
-
-  // Add event data from tag fields
-  if (data.add_event_parameters) {
-    const event_params = data.event_params_to_add;
-
-    if (event_params !== undefined) {
-      for (var i = 0; i < event_params.length; i++) {
-        const param_name = event_params[i].param_name;
-        const param_value = event_params[i].param_value;
-
-        event_data.event_data[param_name] = param_value;
-      }
-    }
-  }
-
-  // Remove event data from tag fields
-  if (data.remove_event_parameters) {
-    const event_params = data.event_params_to_remove;
-
-    if (event_params !== undefined) {
-      for (var i = 0; i < event_params.length; i++) {
-        const param_name = event_params[i].param_name;
-
-        Object.delete(event_data.event_data, param_name);
-      }
-    }
-  }
-
-  return event_data;
-}
-
+// The channel grouping is set here, before the first event is grouped: the sandbox reads a const declared
+// further down the file as undefined, so the tables it uses must be built before that call.
 
 // --------------------------------------------------------------------------------------------------------------
 // CHANNEL GROUPING
@@ -1870,6 +1006,874 @@ function get_channel_grouping(source, medium, campaign_click_id_type) {
 
   if (ad_click) return 'display';
   return (m === '' && s.indexOf('.') >= 0) ? 'referral' : 'other';
+}
+
+
+if (event_data.event_data) {
+  // Optional in the payload: sources that do not send it, such as the Streaming Protocol, have none
+  if (event_data.event_data.medium === undefined) { event_data.event_data.medium = null; }
+  if (event_data.event_data.campaign_click_id_type === undefined) { event_data.event_data.campaign_click_id_type = null; }
+  event_data.event_data.channel_grouping = get_channel_grouping(event_data_obj.source, event_data_obj.medium, event_data_obj.campaign_click_id_type);
+  event_data.event_data.channel_paid = get_channel_paid(event_data_obj.medium, event_data_obj.campaign_click_id_type);
+}
+
+
+// Cookie values
+const user_cookie_name = (data.change_cookie_prefix) ? data.cookie_prefix + '_na_u' : 'na_u';
+const user_cookie_value = getCookieValues(user_cookie_name)[0];
+
+const session_cookie_name = (data.change_cookie_prefix) ? data.cookie_prefix + '_na_s' : 'na_s';
+const session_cookie_value = getCookieValues(session_cookie_name)[0];
+
+
+// Validate cookie format
+function validate_user_cookie(cookie) {
+  if (!cookie) return true;
+  const pattern = createRegex('^[A-Za-z0-9]{15}$');
+  return testRegex(pattern, cookie);
+}
+
+function validate_session_cookie(cookie) {
+  if (!cookie) return true;
+  const pattern = createRegex('^[A-Za-z0-9]{15}_[A-Za-z0-9]{15}-[A-Za-z0-9]{15}$');
+  return testRegex(pattern, cookie);
+}
+
+// Validate cross-domain ID format (session_id: 15 char + _ + 15 char)
+function validate_cross_domain_id(id) {
+  if (!id) return false;
+  const pattern = createRegex('^[A-Za-z0-9]{15}_[A-Za-z0-9]{15}$');
+  return testRegex(pattern, id);
+}
+
+
+// Validate payload schema before deriving values or writing data
+function validate_payload_schema(payload) {
+  const errors = [];
+  const is_get_user_data = payload.event_name === 'get_user_data';
+  const allowed_fields = (is_get_user_data) ?
+    ['event_name', 'event_origin'] :
+    ['user_data', 'session_data', 'page_date', 'page_id', 'page_data', 'event_date', 'event_timestamp', 'event_id', 'event_name', 'event_origin', 'event_data', 'datalayer', 'ecommerce', 'gtm_data', 'consent_data'];
+
+  Object.keys(payload).forEach((key) => {
+    if (allowed_fields.indexOf(key) === -1) {
+      errors.push('unsupported top-level parameter "' + key + '"');
+    }
+  });
+
+  if (is_get_user_data) {
+    if (getType(payload.event_origin) !== 'string') {
+      errors.push('event_origin must be a string');
+    } else if (payload.event_origin !== 'Website' && payload.event_origin !== 'Streaming Protocol') {
+      errors.push('event_origin must be Website or Streaming Protocol');
+    }
+
+    return errors;
+  }
+
+  if (getType(payload.page_date) === 'undefined' || getType(payload.page_date) === 'null') {
+    errors.push('page_date is required');
+  } else if (!validate_iso_date(payload.page_date)) {
+    errors.push('page_date must be a valid date in YYYY-MM-DD format');
+  }
+
+  const valid_page_id = validate_partial_page_id(payload.page_id);
+  if (getType(payload.page_id) === 'undefined' || getType(payload.page_id) === 'null') {
+    errors.push('page_id is required');
+  } else if (!valid_page_id) {
+    errors.push('page_id must be a 15-character alphanumeric string');
+  }
+
+  if (getType(payload.page_data) === 'undefined' || getType(payload.page_data) === 'null') {
+    errors.push('page_data is required');
+  } else if (getType(payload.page_data) !== 'object' || Object.keys(payload.page_data).length === 0) {
+    errors.push('page_data must be a non-empty object');
+  } else {
+    validate_required_nullable_string(payload.page_data, 'page_title', errors);
+    validate_required_string(payload.page_data, 'page_hostname', errors);
+    validate_required_nullable_string(payload.page_data, 'page_url', errors);
+    validate_required_nullable_string(payload.page_data, 'page_path', errors);
+    validate_required_positive_integer(payload.page_data, 'page_load_timestamp', errors);
+  }
+
+  if (getType(payload.event_date) === 'undefined' || getType(payload.event_date) === 'null') {
+    errors.push('event_date is required');
+  } else if (!validate_iso_date(payload.event_date)) {
+    errors.push('event_date must be a valid date in YYYY-MM-DD format');
+  }
+
+  if (getType(payload.event_timestamp) === 'undefined' || getType(payload.event_timestamp) === 'null') {
+    errors.push('event_timestamp is required');
+  } else if (getType(payload.event_timestamp) !== 'number' || payload.event_timestamp <= 0 || payload.event_timestamp % 1 !== 0) {
+    errors.push('event_timestamp must be a positive integer');
+  }
+
+  const valid_event_id = validate_partial_event_id(payload.event_id);
+  if (getType(payload.event_id) === 'undefined' || getType(payload.event_id) === 'null') {
+    errors.push('event_id is required');
+  } else if (!valid_event_id) {
+    errors.push('event_id must contain two 15-character alphanumeric segments separated by an underscore');
+  } else if (valid_page_id && payload.event_id.indexOf(payload.page_id + '_') !== 0) {
+    errors.push('event_id must start with page_id followed by an underscore');
+  }
+
+  if (getType(payload.event_name) === 'undefined' || getType(payload.event_name) === 'null') {
+    errors.push('event_name is required');
+  } else if (getType(payload.event_name) !== 'string' || payload.event_name.length === 0) {
+    errors.push('event_name must be a non-empty string');
+  }
+
+  if (getType(payload.event_origin) === 'undefined' || getType(payload.event_origin) === 'null') {
+    errors.push('event_origin is required');
+  } else if (getType(payload.event_origin) !== 'string') {
+    errors.push('event_origin must be a string');
+  } else if (payload.event_origin !== 'Website' && payload.event_origin !== 'Streaming Protocol') {
+    errors.push('event_origin must be Website or Streaming Protocol');
+  }
+
+  const valid_event_data = getType(payload.event_data) === 'object' && Object.keys(payload.event_data).length > 0;
+  if (getType(payload.event_data) === 'undefined' || getType(payload.event_data) === 'null') {
+    errors.push('event_data is required');
+  } else if (!valid_event_data) {
+    errors.push('event_data must be a non-empty object');
+  } else if (getType(payload.event_data.event_type) === 'undefined' || getType(payload.event_data.event_type) === 'null') {
+    errors.push('event_data.event_type is required');
+  } else if (getType(payload.event_data.event_type) !== 'string') {
+    errors.push('event_data.event_type must be a string');
+  } else if (payload.event_name === 'page_view' && payload.event_data.event_type !== 'page_view') {
+    errors.push('event_data.event_type must be page_view when event_name is page_view');
+  } else if (payload.event_name !== 'page_view' && payload.event_data.event_type !== 'event') {
+    errors.push('event_data.event_type must be event when event_name is not page_view');
+  }
+
+  if (valid_event_data) {
+    validate_required_nullable_string(payload.event_data, 'source', errors);
+    validate_required_nullable_string(payload.event_data, 'campaign', errors);
+    validate_required_nullable_string(payload.event_data, 'campaign_id', errors);
+    validate_required_nullable_string(payload.event_data, 'campaign_click_id', errors);
+    validate_required_nullable_string(payload.event_data, 'campaign_term', errors);
+    validate_required_nullable_string(payload.event_data, 'campaign_content', errors);
+    validate_optional_nullable_string(payload.event_data, 'medium', errors);
+    validate_optional_nullable_string(payload.event_data, 'campaign_click_id_type', errors);
+  }
+
+  validate_optional_object(payload, 'user_data', errors);
+  validate_optional_object(payload, 'session_data', errors);
+  validate_optional_object(payload, 'gtm_data', errors);
+  validate_optional_object(payload, 'consent_data', errors);
+
+  validate_consent_data_values(payload.consent_data, errors);
+  validate_gtm_data_values(payload.gtm_data, errors);
+
+  if (getType(payload.consent_data) === 'object' && Object.keys(payload.consent_data).length === 0) {
+    errors.push('consent_data must be a non-empty object or null');
+  }
+
+  if (getType(payload.datalayer) !== 'undefined' && getType(payload.datalayer) !== 'null' && getType(payload.datalayer) !== 'array') {
+    errors.push('datalayer must be an array or null');
+  }
+
+  if (getType(payload.ecommerce) !== 'undefined' && getType(payload.ecommerce) !== 'null' && getType(payload.ecommerce) !== 'object') {
+    errors.push('ecommerce must be an object or null');
+  }
+
+  return errors;
+}
+
+
+function validate_optional_object(payload, key, errors) {
+  const value_type = getType(payload[key]);
+
+  if (value_type !== 'undefined' && value_type !== 'null' && value_type !== 'object') {
+    errors.push(key + ' must be an object or null');
+  }
+}
+
+
+function validate_consent_data_values(consent_data, errors) {
+  if (getType(consent_data) !== 'object') { return; }
+
+  Object.keys(consent_data).forEach((key) => {
+    const value_type = getType(consent_data[key]);
+
+    if (value_type !== 'string' && value_type !== 'null') {
+      errors.push('consent_data.' + key + ' must be a string or null');
+    }
+  });
+}
+
+
+function validate_gtm_data_values(gtm_data, errors) {
+  if (getType(gtm_data) !== 'object') { return; }
+
+  Object.keys(gtm_data).forEach((key) => {
+    const value = gtm_data[key];
+    const value_type = getType(value);
+
+    if (value_type !== 'string' && value_type !== 'null' && (value_type !== 'number' || value % 1 !== 0)) {
+      errors.push('gtm_data.' + key + ' must be a string, integer or null');
+    }
+  });
+}
+
+
+function validate_reserved_parameters(payload) {
+  const errors = [];
+  const reserved_user_parameters = [
+    'user_date',
+    'client_id',
+    'sessions',
+    'user_channel_grouping',
+    'user_channel_paid',
+    'user_source',
+    'user_tld_source',
+    'user_campaign',
+    'user_campaign_id',
+    'user_campaign_click_id',
+    'user_campaign_click_id_type',
+    'user_campaign_term',
+    'user_campaign_content',
+    'user_medium',
+    'user_device_type',
+    'user_country',
+    'user_city',
+    'user_language',
+    'user_first_session_timestamp',
+    'user_last_session_timestamp'
+  ];
+  const reserved_session_parameters = [
+    'session_date',
+    'session_id',
+    'session_number',
+    'cross_domain_session',
+    'session_channel_grouping',
+    'session_channel_paid',
+    'session_source',
+    'session_tld_source',
+    'session_campaign',
+    'session_campaign_id',
+    'session_campaign_click_id',
+    'session_campaign_click_id_type',
+    'session_campaign_term',
+    'session_campaign_content',
+    'session_medium',
+    'session_device_type',
+    'session_country',
+    'session_city',
+    'session_language',
+    'session_hostname',
+    'session_browser_name',
+    'session_landing_page_category',
+    'session_landing_page_url',
+    'session_landing_page_path',
+    'session_landing_page_title',
+    'session_exit_page_category',
+    'session_exit_page_url',
+    'session_exit_page_path',
+    'session_exit_page_title',
+    'session_start_timestamp',
+    'session_end_timestamp'
+  ];
+
+  Object.keys(payload.user_data || {}).forEach((key) => {
+    if (reserved_user_parameters.indexOf(key) !== -1) {
+      errors.push('user_data.' + key + ' is reserved');
+    }
+  });
+
+  Object.keys(payload.session_data || {}).forEach((key) => {
+    if (reserved_session_parameters.indexOf(key) !== -1) {
+      errors.push('session_data.' + key + ' is reserved');
+    }
+  });
+
+  return errors;
+}
+
+
+function validate_required_string(container, key, errors) {
+  const value_type = getType(container[key]);
+
+  if (value_type === 'undefined') {
+    errors.push(key + ' is required');
+  } else if (value_type !== 'string' || container[key].length === 0) {
+    errors.push(key + ' must be a non-empty string');
+  }
+}
+
+
+function validate_required_nullable_string(container, key, errors) {
+  const value_type = getType(container[key]);
+
+  if (value_type === 'undefined') {
+    errors.push(key + ' is required');
+  } else if (value_type !== 'string' && value_type !== 'null') {
+    errors.push(key + ' must be a string or null');
+  }
+}
+
+
+function validate_optional_nullable_string(container, key, errors) {
+  const value_type = getType(container[key]);
+
+  if (value_type !== 'undefined' && value_type !== 'string' && value_type !== 'null') {
+    errors.push(key + ' must be a string or null');
+  }
+}
+
+
+function validate_required_positive_integer(container, key, errors) {
+  const value = container[key];
+  const value_type = getType(value);
+
+  if (value_type === 'undefined' || value_type === 'null') {
+    errors.push(key + ' is required');
+  } else if (value_type !== 'number' || value <= 0 || value % 1 !== 0) {
+    errors.push(key + ' must be a positive integer');
+  }
+}
+
+
+function validate_iso_date(value) {
+  if (getType(value) !== 'string') return false;
+
+  const pattern = createRegex('^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$');
+  if (!testRegex(pattern, value)) return false;
+
+  const parts = value.split('-');
+  const year = makeNumber(parts[0]);
+  const month = makeNumber(parts[1]);
+  const day = makeNumber(parts[2]);
+  const days_in_month = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  const leap_year = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+
+  if (leap_year) days_in_month[1] = 29;
+
+  return year >= 1 && day <= days_in_month[month - 1];
+}
+
+
+function validate_partial_page_id(id) {
+  if (getType(id) !== 'string') return false;
+  const pattern = createRegex('^[A-Za-z0-9]{15}$');
+  return testRegex(pattern, id);
+}
+
+
+function validate_partial_event_id(id) {
+  if (getType(id) !== 'string') return false;
+  const pattern = createRegex('^[A-Za-z0-9]{15}_[A-Za-z0-9]{15}$');
+  return testRegex(pattern, id);
+}
+
+
+// --------------------------------------------------------------------------------------------------------------
+// CHECK REQUESTS
+// --------------------------------------------------------------------------------------------------------------
+
+// Check request endpoint
+if (data.enable_logs) { log('NAMELESS ANALYTICS'); }
+if (data.enable_logs) { log('CLIENT TAG CONFIGURATION'); }
+log_client_tag_configuration();
+
+// Check request origin, required fields and claim requests
+if (check_origin()) {
+  if (!check_ip()) {
+
+    if (data.enable_logs) { log('CHECKING REQUEST'); }
+
+    if (event_name === 'get_user_data') {
+      if (data.enable_logs) { log('👉 Request type: Get user data'); }
+    } else {
+      if (data.enable_logs) { log('👉 Request type:', event_origin); }
+    }
+
+    if (data.enable_logs) { log('👉 Event name: ', event_data.event_name); }
+
+    if (request_method === 'POST') {
+      // REFUSE REQUESTS
+      // Check if user or session cookie is missing for get_user_data requests
+      if (event_name === 'get_user_data' && (user_cookie_value === undefined || session_cookie_value === undefined)) {
+        if (data.enable_logs) { log('👉 Request from get_user_data event'); }
+
+        if (data.enable_logs) { log('CHECKING COOKIES'); }
+
+        if (user_cookie_value === undefined) {
+          message = '🔴 User cookie not found. No cross-domain URL decoration will be applied';
+          status_code = 400;
+
+          claim_request(set_ids_get_user_data(), status_code, message);
+          return;
+        } else if (session_cookie_value === undefined) {
+          message = '🔴 Session cookie not found. No cross-domain URL decoration will be applied';
+          status_code = 400;
+
+          claim_request(set_ids_get_user_data(), status_code, message);
+          return;
+        }
+      }
+
+      // Check User-Agent header (Bot detection)
+      const request_user_agent = (getRequestHeader('User-Agent') || '').toLowerCase();
+
+      if (!request_user_agent) {
+        message = '🔴 Missing User-Agent header. Request from bot';
+        status_code = 403;
+
+        claim_request({ event_name: event_name }, status_code, message);
+        return;
+      }
+
+      if (event_origin === 'Streaming Protocol' && request_user_agent !== 'nameless analytics - streaming protocol') {
+        message = '🔴 Invalid User-Agent header value. Request from bot';
+        status_code = 403;
+
+        claim_request({ event_name: event_name }, status_code, message);
+        return;
+      }
+
+      if (data.enable_bot_protection) {
+        const bad_agents = ["curl", "wget", "python", "requests", "httpie", "go-http-client", "java", "okhttp", "libwww", "perl", "axios", "node", "fetch", "php", "guzzle", "ruby", "faraday", "rest-client", "gptbot", "chatgpt", "anthropic", "claude", "perplexity", "bytespider", "ccbot", "ahrefs", "semrush", "dotbot", "mj12", "rogerbot", "nmap", "zgrab", "masscan", "shodan", "bot", "crawler", "spider", "scraper", "headless", "phantomjs", "selenium", "puppeteer", "playwright", "cypress", "electron"];
+
+        // Cubot is a phone brand, not a bot: its name is left out of what the signatures are looked for in
+        const checked_user_agent = request_user_agent.split('cubot').join('');
+
+        for (var i = 0; i < bad_agents.length; i++) {
+          if (checked_user_agent.indexOf(bad_agents[i]) !== -1) {
+            message = '🔴 Invalid User-Agent header value. Request from bot';
+            status_code = 403;
+            claim_request({ event_name: event_name }, status_code, message);
+            return;
+          }
+        }
+      }
+
+      // Check Streaming Protocol requests API key
+      if (event_origin === 'Streaming Protocol') {
+        if (!data.add_api_key) {
+          message = '🔴 Add API key for Streaming Protocol is not enabled.';
+          status_code = 403;
+
+          claim_request({ event_name: event_name }, status_code, message);
+          return;
+        }
+
+        if (event_api_key !== api_key) {
+          message = '🔴 Invalid API key';
+          status_code = 401;
+
+          claim_request({ event_name: event_name }, status_code, message);
+          return;
+        }
+      }
+
+      // Check if page_view is from Streaming Protocol
+      if (event_name === 'page_view' && event_origin === 'Streaming Protocol') {
+        message = '🔴 Invalid event_name. Can\'t send page_view from Streaming Protocol';
+        status_code = 400;
+
+        claim_request({ event_name: event_name }, status_code, message);
+        return;
+      }
+
+      // Check if user cookie is missing
+      if (event_origin === 'Website' && event_data.event_name !== 'page_view' && event_data.event_name !== 'get_user_data' && user_cookie_value === undefined) {
+        message = '🔴 Orphan event: missing user cookie. Trigger a page_view event first to create a new user and a new session';
+        status_code = 400;
+
+        claim_request({ event_name: event_name }, status_code, message);
+        return;
+      }
+
+      // Check if session cookie is missing
+      if (event_origin === 'Website' && event_data.event_name !== 'page_view' && event_data.event_name !== 'get_user_data' && session_cookie_value === undefined) {
+        message = '🔴 Orphan event: missing session cookie. Trigger a page_view event first to create a new session';
+        status_code = 400;
+
+        claim_request({ event_name: event_name }, status_code, message);
+        return;
+      }
+
+      // Check if cookie format is valid
+      if (!validate_user_cookie(user_cookie_value) || !validate_session_cookie(session_cookie_value)) {
+        message = '🔴 Invalid cookie format';
+        status_code = 400;
+
+        claim_request({ event_name: event_name }, status_code, message);
+        return;
+      }
+
+      // CLAIM REQUESTS 
+      // Claim get user data requests
+      if (event_name === 'get_user_data') {
+        if (data.enable_logs) { log('🟢 Request correct, user and session cookies found. Cross-domain URL decoration will be applied'); }
+
+        message = '🟢 Request claimed successfully';
+        status_code = 200;
+
+        claim_request(set_ids_get_user_data(), status_code, message);
+        return;
+      } else {
+        // Claim standard requests
+        if (data.enable_logs) { log('🟢 Request correct'); }
+
+        const processed_event_data = build_payload(set_ids(event_data));
+        const reserved_parameter_errors = validate_reserved_parameters(processed_event_data);
+
+        if (reserved_parameter_errors.length > 0) {
+          message = '🔴 Invalid payload schema: ' + reserved_parameter_errors.join('; ');
+          status_code = 400;
+
+          claim_request({ event_name: processed_event_data.event_name }, status_code, message);
+          return;
+        }
+
+        claim_request(processed_event_data, null, '');
+        return;
+      }
+
+    } else {
+      return_method_not_allowed_response();
+      return;
+    }
+  } else {
+    if (data.enable_logs) { log('CHECKING REQUEST'); }
+
+    // RETURN RESPONSE ERRORS
+    message = '🔴 Request IP not authorized';
+    status_code = 403;
+
+    claim_request({ event_name: event_name }, status_code, message);
+    return;
+  }
+} else {
+  if (data.enable_logs) { log('CHECKING REQUEST'); }
+
+  // RETURN RESPONSE ERRORS
+  message = '🔴 Request origin not authorized';
+  status_code = 403;
+
+  claim_request({ event_name: event_name }, status_code, message);
+  return;
+}
+
+
+// Log the active client tag configuration
+// Printed in full before any validation runs, so the block is complete
+// even when the request is refused by the first check.
+function log_client_tag_configuration() {
+  if (!data.enable_logs) { return; }
+
+  var authorized_domains = '';
+  if (data.add_authorized_domains) {
+    const authorized_domains_list = data.authorized_domains_list;
+    for (var i = 0; i < authorized_domains_list.length; i++) {
+      authorized_domains = authorized_domains.concat(', ', computeEffectiveTldPlusOne(authorized_domains_list[i].authorized_domain));
+    }
+  }
+
+  var banned_ips = '';
+  if (data.add_banned_ips) {
+    const banned_ip_list = data.banned_ips_list;
+    for (var j = 0; j < banned_ip_list.length; j++) {
+      banned_ips = banned_ips.concat(', ', banned_ip_list[j].banned_ip);
+    }
+  }
+
+  log('👉 Endpoint:', endpoint);
+  log('👉 Authorized origins:', (data.add_authorized_domains) ? authorized_domains.slice(2) : ' All');
+  if (data.enable_bot_protection) { log('👉 Bot detection enabled'); }
+  log('👉 Unauthorized IPs:', (data.add_banned_ips) ? banned_ips.slice(2) : 'None');
+}
+
+
+// Check request origin
+function check_origin() {
+  const authorized_domains_list = (data.add_authorized_domains) ? data.authorized_domains_list : [{ authorized_domain: request_origin }];
+
+  for (var i = 0; i < authorized_domains_list.length; i++) {
+    if (computeEffectiveTldPlusOne(request_origin) === computeEffectiveTldPlusOne(authorized_domains_list[i].authorized_domain)) {
+      return true;
+    }
+  }
+}
+
+
+// Check request ip
+function check_ip() {
+  const banned_ip_list = (data.add_banned_ips) ? data.banned_ips_list : [{ banned_ip: null }];
+
+  for (var i = 0; i < banned_ip_list.length; i++) {
+    if (request_ip === banned_ip_list[i].banned_ip) {
+      return true;
+    }
+  }
+}
+
+
+// --------------------------------------------------------------------------------------------------------------
+// HANDLE IDS
+// --------------------------------------------------------------------------------------------------------------
+
+// Handle ids for get_user_data requests (For cross-domain only)
+function set_ids_get_user_data() {
+  const client_id = user_cookie_value || 'undefined';
+  const session_id = session_cookie_value || 'undefined';
+  const page_id = (session_cookie_value) ? session_cookie_value.split('-')[1] : 'undefined';
+
+  const event_data = {
+    event_name: 'get_user_data',
+    client_id: client_id,
+    session_id: session_id.split('-')[0] || 'undefined',
+    page_id: page_id
+  };
+
+  return event_data;
+}
+
+
+// Handle ids for standard requests
+function set_ids(event_data) {
+  const page_id = event_data.page_id;
+  const event_id = event_data.event_id;
+  const raw_cross_domain_id = event_data.event_data.cross_domain_id;
+
+  // Accept the cross-domain ID only if it has a valid session_id format
+  const cross_domain_id = validate_cross_domain_id(raw_cross_domain_id) ? raw_cross_domain_id : null;
+
+  if (raw_cross_domain_id && !cross_domain_id) {
+    if (data.enable_logs) { log('🟠 Invalid cross-domain ID format. Value ignored.'); }
+    event_data.event_data.cross_domain_id = null;
+  }
+
+  // Cross-domain request
+  if (event_origin === 'Website' && cross_domain_id) {
+    const cross_domain_client_id = cross_domain_id.split('_')[0];
+    const cross_domain_session_id = cross_domain_id;
+
+    if (data.enable_logs) { log('👉 Cross-domain visit'); }
+
+    // With an active session
+    if (session_cookie_value) {
+      // With different session id
+      if (cross_domain_session_id !== session_cookie_value.split('-')[0]) {
+        event_data.client_id = cross_domain_client_id;
+        event_data.session_id = cross_domain_session_id;
+        event_data.page_id = cross_domain_session_id + '-' + page_id;
+        event_data.event_id = cross_domain_session_id + '-' + event_id;
+
+        if (data.enable_logs) { log('👉 Create new client_id: ', cross_domain_client_id + ' and new session_id: ', cross_domain_session_id); }
+
+        // With the same session id   
+      } else {
+        const old_client_id = user_cookie_value;
+        const old_session_id = session_cookie_value.split('-')[0];
+
+        event_data.client_id = old_client_id;
+        event_data.session_id = old_session_id;
+        event_data.page_id = old_session_id + '-' + page_id;
+        event_data.event_id = old_session_id + '-' + event_id;
+
+        if (data.enable_logs) { log('CHECKING USER AND SESSION COOKIES'); }
+        if (data.enable_logs) { log('👉 Same client_id, same session_id'); }
+        if (data.enable_logs) { log('👉 Extend cookies max-age'); }
+      }
+
+      // Without an active session         
+    } else {
+      event_data.client_id = cross_domain_client_id;
+      event_data.session_id = cross_domain_session_id;
+      event_data.page_id = cross_domain_session_id + '-' + page_id;
+      event_data.event_id = cross_domain_session_id + '-' + event_id;
+
+      if (data.enable_logs) { log('CHECKING USER AND SESSION COOKIES'); }
+      if (data.enable_logs) { log('👉 Returning user, no active session'); }
+      if (data.enable_logs) { log('👉 Same client_id: ', cross_domain_client_id + ', create new session_id: ', cross_domain_session_id); }
+    }
+
+    // No cross-domain request
+  } else {
+    // New user
+    if (user_cookie_value === undefined) {
+      const new_client_id = generate_alphanumeric();
+      const new_session_id = new_client_id + '_' + generate_alphanumeric();
+
+      event_data.client_id = new_client_id;
+      event_data.session_id = new_session_id;
+      event_data.page_id = new_session_id + '-' + page_id;
+      event_data.event_id = new_session_id + '-' + event_id;
+
+      if (data.enable_logs) { log('CHECKING USER AND SESSION COOKIES'); }
+      if (data.enable_logs) { log('👉 New user, no active session'); }
+      if (data.enable_logs) { log('👉 Create new client_id: ', new_client_id + ' and new session_id: ', new_session_id); }
+
+      // Returning user
+    } else if (user_cookie_value !== undefined) {
+      // No session cookie
+      if (session_cookie_value === undefined) {
+        const old_client_id = user_cookie_value;
+        const new_session_id = old_client_id + '_' + generate_alphanumeric();
+
+        event_data.client_id = old_client_id;
+        event_data.session_id = new_session_id;
+        event_data.page_id = new_session_id + '-' + page_id;
+        event_data.event_id = new_session_id + '-' + event_id;
+
+        if (data.enable_logs) { log('CHECKING USER AND SESSION COOKIES'); }
+        if (data.enable_logs) { log('👉 Returning user, no active session'); }
+        if (data.enable_logs) { log('👉 Same client_id: ', old_client_id + ', create new session_id: ', new_session_id); }
+
+        // Yes session cookie
+      } else {
+        const old_client_id = user_cookie_value;
+        const old_session_id = session_cookie_value.split('-')[0];
+
+        event_data.client_id = old_client_id;
+        event_data.session_id = old_session_id;
+        event_data.page_id = old_session_id + '-' + page_id;
+        event_data.event_id = old_session_id + '-' + event_id;
+
+        if (data.enable_logs) { log('CHECKING USER AND SESSION COOKIES'); }
+        if (data.enable_logs) { log('👉 Same client_id, same session_id'); }
+        if (data.enable_logs) { log('👉 Extend cookies max-age'); }
+      }
+    }
+  }
+
+  return event_data;
+}
+
+
+// Generate random alphanumeric ID 
+function generate_alphanumeric() {
+  var max_length = 15; // Change this to the desired length
+  var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  var alphanumeric_id = '';
+
+  for (var i = 0; i < max_length; i++) {
+    alphanumeric_id += chars.charAt(generateRandom(0, chars.length - 1));
+  }
+
+  return alphanumeric_id;
+}
+
+
+// --------------------------------------------------------------------------------------------------------------
+// BUILD PAYLOAD
+// --------------------------------------------------------------------------------------------------------------
+
+// Build payload data for standard requests
+function build_payload(event_data) {
+  // Add additional info    
+
+  // When hosting GTM Server-side on Cloud Run, follow this guide to correctly configure geolocation headers: https://www.simoahava.com/analytics/cloud-run-server-side-tagging-google-tag-manager/#add-geolocation-headers-to-the-traffic
+
+  event_data.event_data.country = getRequestHeader('X-Appengine-Country') || getRequestHeader('X-Gclb-Country') || getRequestHeader('X-GEO-Country');
+  event_data.event_data.city = getRequestHeader('X-Appengine-City') || getRequestHeader('X-Gclb-City') || getRequestHeader('X-GEO-City');
+
+  event_data.gtm_data.ss_hostname = getRequestHeader('Host');
+  event_data.gtm_data.ss_container_id = getContainerVersion().containerId;
+  event_data.gtm_data.ss_tag_name = getClientName();
+  event_data.gtm_data.ss_tag_id = null;
+  event_data.gtm_data.processing_event_timestamp = getTimestampMillis();
+  event_data.gtm_data.content_length = makeNumber(getRequestHeader('content-length'));
+
+  // User data
+  // Add or override user ID
+  if (data.override_user_id) {
+    event_data.session_data.user_id = (data.user_id === "null") ? null : data.user_id;
+  }
+
+  // Add user data from tag fields
+  if (data.add_user_parameters) {
+    const user_params = data.user_params_to_add;
+
+    if (user_params !== undefined) {
+      for (var i = 0; i < user_params.length; i++) {
+        const param_name = user_params[i].param_name;
+        const param_value = user_params[i].param_value;
+
+        event_data.user_data[param_name] = param_value;
+      }
+    }
+  }
+
+  // Remove user data from tag fields
+  if (data.remove_user_parameters) {
+    const user_params = data.user_params_to_remove;
+
+    if (user_params !== undefined) {
+      for (var i = 0; i < user_params.length; i++) {
+        const param_name = user_params[i].param_name;
+
+        Object.delete(event_data.user_data, param_name);
+      }
+    }
+  }
+
+
+  // Session data
+  // Add session data from tag fields
+  if (data.add_session_parameters) {
+    const session_params = data.session_params_to_add;
+
+    if (session_params !== undefined) {
+      for (var i = 0; i < session_params.length; i++) {
+        const param_name = session_params[i].param_name;
+        const param_value = session_params[i].param_value;
+
+        event_data.session_data[param_name] = param_value;
+      }
+    }
+  }
+
+  // Remove session data from tag fields
+  if (data.remove_session_parameters) {
+    const session_params = data.session_params_to_remove;
+
+    if (session_params !== undefined) {
+      for (var i = 0; i < session_params.length; i++) {
+        const param_name = session_params[i].param_name;
+
+        Object.delete(event_data.session_data, param_name);
+      }
+    }
+  }
+
+
+  // Event data
+  if (event_data.event_data.source) {
+    event_data.event_data.tld_source = (computeEffectiveTldPlusOne(event_data.event_data.source) !== '') ? computeEffectiveTldPlusOne(event_data.event_data.source) : event_data.event_data.source;
+  }
+
+  // Add event data from tag fields
+  if (data.add_event_parameters) {
+    const event_params = data.event_params_to_add;
+
+    if (event_params !== undefined) {
+      for (var i = 0; i < event_params.length; i++) {
+        const param_name = event_params[i].param_name;
+        const param_value = event_params[i].param_value;
+
+        event_data.event_data[param_name] = param_value;
+      }
+    }
+  }
+
+  // Remove event data from tag fields
+  if (data.remove_event_parameters) {
+    const event_params = data.event_params_to_remove;
+
+    if (event_params !== undefined) {
+      for (var i = 0; i < event_params.length; i++) {
+        const param_name = event_params[i].param_name;
+
+        Object.delete(event_data.event_data, param_name);
+      }
+    }
+  }
+
+  return event_data;
 }
 
 
